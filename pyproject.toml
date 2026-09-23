@@ -25,6 +25,8 @@ where = ["src"]
 [tool.pytest.ini_options]
 testpaths = ["tests/unit"]
 pythonpath = ["src"]
+# 시스템 임시 폴더(%TEMP%)가 막혀 있는 환경이 있어 프로젝트 안에 임시 폴더를 둔다
+addopts = "--basetemp=.pytest-tmp"
 
 [tool.ruff]
 line-length = 100
