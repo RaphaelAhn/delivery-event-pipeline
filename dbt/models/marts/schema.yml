@@ -1,0 +1,36 @@
+version: 2
+
+models:
+  - name: fct_delivery_order
+    description: |
+      주문 1건 = 1행. 주문·배차·배달을 이어 붙이고 최종 상태와 소요 시간 지표를 계산한다.
+      주문 생성 이벤트가 없는 배차·배달(부모 없는 이벤트)은 여기에 포함되지 않는다.
+    columns:
+      - name: order_id
+        data_tests: [unique, not_null]
+      - name: ordered_at
+        data_tests: [not_null]
+      - name: order_status
+        data_tests:
+          - accepted_values:
+              values: ["delivered", "cancelled", "incomplete"]
+      - name: dispatch_attempts
+        description: 배차 시도 횟수. 생성기가 최대 3회까지만 만든다.
+        data_tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+              max_value: 3
+              inclusive: true
+      - name: rejected_event_count
+        description: |
+          이 주문에서 계약 위반으로 DLQ 에 들어간 이벤트 수.
+          0 보다 크면 아래 지표가 불완전할 수 있다는 뜻이다. 지표 해석 시 제외하거나 따로 본다.
+        data_tests: [not_null]
+      - name: actual_delivery_minutes
+        description: 수락 시각부터 배달 완료까지 걸린 시간. 완료되지 않은 주문은 null.
+        data_tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+              inclusive: false
+              config:
+                where: "actual_delivery_minutes is not null"

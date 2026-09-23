@@ -1,0 +1,30 @@
+version: 2
+
+unit_tests:
+  - name: keeps_the_first_arrival_of_a_duplicated_event
+    description: 같은 event_id 가 두 번 적재되면 먼저 도착한 행만 남는다.
+    model: stg_order_events
+    given:
+      - input: source('raw', 'raw_order_events')
+        rows:
+          - {event_id: "e1", event_type: "OrderCreated", order_id: "O-1", event_time: "2026-01-01 00:00:00", schema_version: 1, region_id: "R-1", experiment_variant: "control", cancel_reason: null, topic: "orders.events", partition: 0, offset: 10, ingested_at: "2026-01-01 00:00:05"}
+          - {event_id: "e1", event_type: "OrderCreated", order_id: "O-1", event_time: "2026-01-01 00:00:00", schema_version: 1, region_id: "R-1", experiment_variant: "control", cancel_reason: null, topic: "orders.events", partition: 0, offset: 11, ingested_at: "2026-01-01 00:03:00"}
+          - {event_id: "e2", event_type: "OrderCancelled", order_id: "O-1", event_time: "2026-01-01 00:10:00", schema_version: 1, region_id: null, experiment_variant: null, cancel_reason: "no_rider", topic: "orders.events", partition: 0, offset: 12, ingested_at: "2026-01-01 00:10:02"}
+    expect:
+      rows:
+        - {event_id: "e1", offset: 10, ingested_at: "2026-01-01 00:00:05"}
+        - {event_id: "e2", offset: 12, ingested_at: "2026-01-01 00:10:02"}
+
+  - name: breaks_ties_when_ingested_at_is_identical
+    description: |
+      도착 시각이 완전히 같아도 결과가 흔들리면 안 된다.
+      topic·partition·offset 순으로 정렬해 항상 같은 행을 남긴다.
+    model: stg_order_events
+    given:
+      - input: source('raw', 'raw_order_events')
+        rows:
+          - {event_id: "e1", event_type: "OrderCreated", order_id: "O-1", event_time: "2026-01-01 00:00:00", schema_version: 1, region_id: "R-1", experiment_variant: "control", cancel_reason: null, topic: "orders.events", partition: 2, offset: 7, ingested_at: "2026-01-01 00:00:05"}
+          - {event_id: "e1", event_type: "OrderCreated", order_id: "O-1", event_time: "2026-01-01 00:00:00", schema_version: 1, region_id: "R-1", experiment_variant: "control", cancel_reason: null, topic: "orders.events", partition: 0, offset: 99, ingested_at: "2026-01-01 00:00:05"}
+    expect:
+      rows:
+        - {event_id: "e1", partition: 0, offset: 99}

@@ -1,0 +1,14 @@
+# 접속 정보는 환경변수에서만 읽는다. 로컬 경로나 비밀번호를 파일에 적지 않는다.
+delivery:
+  target: dev
+  outputs:
+    dev:
+      type: clickhouse
+      host: "{{ env_var('CLICKHOUSE_HOST', 'localhost') }}"
+      port: "{{ env_var('CLICKHOUSE_PORT', '8123') | int }}"
+      driver: http
+      user: "{{ env_var('CLICKHOUSE_USER', 'pipeline') }}"
+      password: "{{ env_var('CLICKHOUSE_PASSWORD', 'pipeline') }}"
+      schema: "{{ env_var('CLICKHOUSE_DB', 'delivery') }}"
+      secure: False
+      threads: 4

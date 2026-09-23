@@ -1,0 +1,49 @@
+version: 2
+
+models:
+  - name: stg_order_events
+    description: 주문 생성·취소 이벤트. event_id 기준 중복 제거 완료.
+    columns:
+      - name: event_id
+        description: 이벤트 하나의 고유 번호. 중복 제거의 기준.
+        data_tests: [unique, not_null]
+      - name: order_id
+        data_tests: [not_null]
+      - name: event_type
+        data_tests:
+          - accepted_values:
+              values: ["OrderCreated", "OrderCancelled"]
+      - name: event_time
+        data_tests: [not_null]
+
+  - name: stg_dispatch_events
+    description: 배차 결과 이벤트. event_id 기준 중복 제거 완료.
+    columns:
+      - name: event_id
+        data_tests: [unique, not_null]
+      - name: order_id
+        data_tests: [not_null]
+      - name: dispatch_id
+        data_tests: [not_null]
+      - name: result
+        data_tests:
+          - accepted_values:
+              values: ["accepted", "rejected"]
+      - name: eta_minutes
+        description: 수락된 배차에만 있다. 0 이하는 검사원이 걸러 여기까지 오지 않는다.
+        data_tests:
+          - dbt_utils.accepted_range:
+              min_value: 1
+              inclusive: true
+              config:
+                where: "eta_minutes is not null"
+
+  - name: stg_delivery_events
+    description: 배달 완료 이벤트. event_id 기준 중복 제거 완료.
+    columns:
+      - name: event_id
+        data_tests: [unique, not_null]
+      - name: order_id
+        data_tests: [not_null]
+      - name: dispatch_id
+        data_tests: [not_null]

@@ -61,6 +61,19 @@ python -m pipeline.producer.publish
 
 Kafka UI: http://localhost:8080
 
+수집한 이벤트를 검사해 ClickHouse에 적재하고, dbt로 정제합니다.
+
+```bash
+python -m pipeline.consumer.run --from-beginning   # Kafka → 검사 → ClickHouse (불합격은 DLQ)
+
+cd dbt
+dbt deps
+dbt build                                          # staging 중복 제거 → fct_delivery_order + 테스트
+```
+
+Windows에서 dbt를 돌릴 때는 `PYTHONUTF8=1`을 설정하세요. 설정하지 않으면 한글 주석이 있는 파일을
+시스템 인코딩(cp949)으로 읽으려다 실패합니다.
+
 ## 테스트
 
 ```bash
@@ -86,9 +99,10 @@ python scripts/score_validator.py --orders 2000 --seed 21
 - [x] 이상 이벤트 비율을 조절하는 generator + 단위 테스트
 - [x] Kafka 발행 (`publish.py`)
 - [x] 이벤트 검증 규칙 (`consumer/validate.py`) — 정답지 대비 precision·recall 1.0
-- [ ] ClickHouse 원천 테이블과 컨슈머 적재, DLQ
-- [ ] dbt staging 모델과 테스트
-- [ ] `fct_delivery_order`, end-to-end 실행 스크립트
+- [x] ClickHouse 원천 테이블과 컨슈머 적재, DLQ — 발행 = 적재 + DLQ 검산 통과
+- [x] dbt staging 모델과 테스트 — 중복 104건 제거, 동점 처리 기준 고정
+- [x] `fct_delivery_order` — 주문 1건 = 1행, 품질 구멍(DLQ 영향)을 컬럼으로 표시
+- [ ] end-to-end 실행 스크립트
 - [ ] 결과 수치 (처리량, DLQ 비율, 중복 제거 정확도)
 
 ## 한계

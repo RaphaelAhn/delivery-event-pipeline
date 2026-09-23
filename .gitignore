@@ -9,7 +9,8 @@ __pycache__/
 # 생성된 이벤트 파일
 data/
 
-# dbt
+# dbt (실행 산출물과 로컬 사용자 설정)
 dbt/target/
 dbt/logs/
 dbt/dbt_packages/
+dbt/.user.yml

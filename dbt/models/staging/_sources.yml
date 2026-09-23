@@ -1,0 +1,13 @@
+version: 2
+
+sources:
+  - name: raw
+    database: delivery
+    schema: delivery
+    description: 컨슈머가 들어온 그대로 적재한 원천 테이블. 중복과 지연 이벤트가 그대로 들어 있다.
+    tables:
+      - name: raw_order_events
+      - name: raw_dispatch_events
+      - name: raw_delivery_events
+      - name: raw_dlq_events
+        description: 계약을 어겨 적재되지 못한 이벤트. 위반 1건당 1행.

@@ -1,0 +1,17 @@
+name: delivery
+version: "0.1.0"
+profile: delivery
+
+model-paths: ["models"]
+test-paths: ["tests"]
+target-path: "target"
+clean-targets: ["target", "dbt_packages"]
+
+models:
+  delivery:
+    staging:
+      +materialized: view # 원천을 정리해 보여주는 층. 저장 공간을 쓰지 않는다
+      +schema: staging
+    marts:
+      +materialized: table # 자주 조회하는 층. 미리 계산해 둔다
+      +schema: marts
