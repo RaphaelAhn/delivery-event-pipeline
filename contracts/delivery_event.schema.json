@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "delivery_event.schema.json",
+  "title": "Delivery event (topic: delivery.events)",
+  "type": "object",
+  "required": ["schema_version", "event_id", "event_type", "order_id", "dispatch_id", "event_time"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "event_id": { "type": "string" },
+    "event_type": { "const": "DeliveryCompleted" },
+    "order_id": { "type": "string", "pattern": "^O-[0-9]+$" },
+    "dispatch_id": { "type": "string", "description": "accepted 된 배차 시도의 dispatch_id" },
+    "event_time": { "type": "string", "format": "date-time" }
+  },
+  "additionalProperties": false
+}

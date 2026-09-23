@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "order_event.schema.json",
+  "title": "Order event (topic: orders.events)",
+  "type": "object",
+  "required": ["schema_version", "event_id", "event_type", "order_id", "event_time"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "event_id": { "type": "string", "description": "전역 유일. 재전송 시 같은 값을 유지하므로 중복 제거 키로 사용" },
+    "event_type": { "enum": ["OrderCreated", "OrderCancelled"] },
+    "order_id": { "type": "string", "pattern": "^O-[0-9]+$" },
+    "event_time": { "type": "string", "format": "date-time", "description": "사건 발생 시각 (UTC). 지표 계산의 기준 시각" },
+    "region_id": { "type": "string" },
+    "experiment_variant": { "enum": ["control", "treatment"] },
+    "cancel_reason": { "enum": ["customer_request", "no_rider", "store_closed"] }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "event_type": { "const": "OrderCreated" } } },
+      "then": { "required": ["region_id", "experiment_variant"] }
+    },
+    {
+      "if": { "properties": { "event_type": { "const": "OrderCancelled" } } },
+      "then": { "required": ["cancel_reason"] }
+    }
+  ],
+  "additionalProperties": false
+}

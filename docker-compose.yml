@@ -1,0 +1,69 @@
+name: delivery-event-pipeline
+
+services:
+  kafka:
+    image: apache/kafka:3.9.1
+    container_name: dep-kafka
+    ports:
+      - "9092:9092"
+    environment:
+      # KRaft 단일 노드: 브로커와 컨트롤러를 한 프로세스에서 실행 (ZooKeeper 없음)
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      # INTERNAL: 컨테이너끼리(kafka-ui), EXTERNAL: 호스트의 Python 코드
+      KAFKA_LISTENERS: INTERNAL://:29092,EXTERNAL://:9092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:29092,EXTERNAL://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      # 토픽은 scripts/up 에서 명시적으로 만든다 (오타 토픽이 조용히 생기는 것 방지)
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.8
+    container_name: dep-clickhouse
+    ports:
+      - "8123:8123"   # HTTP (clickhouse-connect, dbt)
+      - "9000:9000"   # native
+    environment:
+      CLICKHOUSE_DB: ${CLICKHOUSE_DB:-delivery}
+      CLICKHOUSE_USER: ${CLICKHOUSE_USER:-pipeline}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-pipeline}
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
+    volumes:
+      - clickhouse-data:/var/lib/clickhouse
+      # 최초 기동 시 실행되는 DDL (4일차에 001_raw_tables.sql 작성)
+      - ./clickhouse/init:/docker-entrypoint-initdb.d
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8123/ping | grep -q Ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  kafka-ui:
+    image: provectuslabs/kafka-ui:v0.7.2
+    container_name: dep-kafka-ui
+    ports:
+      - "8080:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: local
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:29092
+    depends_on:
+      kafka:
+        condition: service_healthy
+
+volumes:
+  clickhouse-data:

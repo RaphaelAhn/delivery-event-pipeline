@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "dispatch_event.schema.json",
+  "title": "Dispatch event (topic: dispatch.events)",
+  "type": "object",
+  "required": ["schema_version", "event_id", "event_type", "order_id", "dispatch_id", "rider_id", "result", "event_time"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "event_id": { "type": "string" },
+    "event_type": { "const": "DispatchResult" },
+    "order_id": { "type": "string", "pattern": "^O-[0-9]+$" },
+    "dispatch_id": { "type": "string", "description": "주문별 배차 시도 ID. 형식: D-<주문번호>-<시도 순번>" },
+    "rider_id": { "type": "string" },
+    "result": { "enum": ["accepted", "rejected"] },
+    "eta_minutes": { "type": "integer", "minimum": 1, "description": "accepted 일 때만 존재" },
+    "event_time": { "type": "string", "format": "date-time" }
+  },
+  "if": { "properties": { "result": { "const": "accepted" } } },
+  "then": { "required": ["eta_minutes"] },
+  "additionalProperties": false
+}
