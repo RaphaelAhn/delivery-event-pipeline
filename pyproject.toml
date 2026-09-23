@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "Kafka → validation → ClickHouse → dbt pipeline for synthetic delivery events"
 requires-python = ">=3.11"
 dependencies = [
+    "clickhouse-connect>=0.8",
     "confluent-kafka>=2.6",
     "jsonschema>=4.23",
     "python-dotenv>=1.0",

@@ -13,4 +13,13 @@ foreach ($topic in @("orders.events", "dispatch.events", "delivery.events")) {
 }
 
 docker exec dep-kafka /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list
+
+# 원천 테이블. 볼륨이 이미 있으면 컨테이너의 자동 실행이 건너뛰어지므로 여기서도 적용한다.
+$user = if ($env:CLICKHOUSE_USER) { $env:CLICKHOUSE_USER } else { "pipeline" }
+$password = if ($env:CLICKHOUSE_PASSWORD) { $env:CLICKHOUSE_PASSWORD } else { "pipeline" }
+Get-Content clickhouse/init/001_raw_tables.sql -Raw | docker exec -i dep-clickhouse `
+    clickhouse-client --user $user --password $password --multiquery
+if ($LASTEXITCODE -ne 0) { throw "failed to create ClickHouse tables" }
+Write-Host "ClickHouse tables ready"
+
 Write-Host "Kafka UI: http://localhost:8080"

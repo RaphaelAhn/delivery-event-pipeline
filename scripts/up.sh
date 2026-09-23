@@ -12,4 +12,11 @@ for topic in orders.events dispatch.events delivery.events; do
 done
 
 docker exec dep-kafka /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list
+
+# 원천 테이블. 볼륨이 이미 있으면 컨테이너의 자동 실행이 건너뛰어지므로 여기서도 적용한다.
+docker exec -i dep-clickhouse clickhouse-client \
+  --user "${CLICKHOUSE_USER:-pipeline}" --password "${CLICKHOUSE_PASSWORD:-pipeline}" \
+  --multiquery < clickhouse/init/001_raw_tables.sql
+echo "ClickHouse tables ready"
+
 echo "Kafka UI: http://localhost:8080"
