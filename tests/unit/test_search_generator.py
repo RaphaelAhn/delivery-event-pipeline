@@ -69,6 +69,10 @@ def test_manifest_lists_every_bot_session():
     assert bots <= sessions
     assert batch.manifest["counts"]["bot_sessions"] == len(bots)
     assert batch.manifest["counts"]["normal_sessions"] == 500 - len(bots)
+    # 봇은 두 종류로 나뉘고, 둘을 합치면 전체 봇 수와 같다
+    counts = batch.manifest["counts"]
+    assert counts["aggressive_bots"] + counts["stealth_bots"] == counts["bot_sessions"]
+    assert set(batch.manifest["bot_profiles"]) == bots
 
 
 def test_bot_ratio_is_close_to_requested():
@@ -78,23 +82,52 @@ def test_bot_ratio_is_close_to_requested():
     assert batch.manifest["counts"]["bot_sessions"] / 3000 == pytest.approx(0.08, abs=0.02)
 
 
-def test_bot_sessions_search_far_more_often_than_people():
+def aggressive_ids(batch):
+    return {sid for sid, kind in batch.manifest["bot_profiles"].items() if kind == "aggressive"}
+
+
+def stealth_ids(batch):
+    return {sid for sid, kind in batch.manifest["bot_profiles"].items() if kind == "stealth"}
+
+
+def test_aggressive_bots_search_far_more_often_than_people():
     batch = generate_search(800, seed=19, rates=NO_ANOMALIES, mix=SearchMix(bot_session_ratio=0.1))
     bots = set(batch.manifest["bot_sessions"])
+    aggressive = aggressive_ids(batch)
     grouped = by_session(batch.events)
 
-    bot_counts = [len(events) for sid, events in grouped.items() if sid in bots]
+    bot_counts = [len(events) for sid, events in grouped.items() if sid in aggressive]
     human_counts = [len(events) for sid, events in grouped.items() if sid not in bots]
 
-    assert min(bot_counts) > max(human_counts), "봇과 사람의 검색 횟수가 겹치면 탐지가 어렵다"
+    assert min(bot_counts) > max(human_counts), "공격적인 봇은 검색 횟수만으로도 구분돼야 한다"
 
 
-def test_bot_sessions_have_short_and_regular_intervals():
-    batch = generate_search(800, seed=23, rates=NO_ANOMALIES, mix=SearchMix(bot_session_ratio=0.1))
+def test_stealth_bots_overlap_with_people_on_purpose():
+    """사람인 척하는 봇은 신호가 겹쳐야 한다. 겹치지 않으면 임계값 선택이 의미를 잃는다."""
+    batch = generate_search(
+        1500, seed=23, rates=NO_ANOMALIES, mix=SearchMix(bot_session_ratio=0.1, stealth_share=1.0)
+    )
     bots = set(batch.manifest["bot_sessions"])
     grouped = by_session(batch.events)
 
-    bot_gaps = [mean(intervals(events)) for sid, events in grouped.items() if sid in bots]
+    stealth_gaps = [
+        mean(gaps) for sid, events in grouped.items() if sid in bots and (gaps := intervals(events))
+    ]
+    human_gaps = [
+        mean(gaps)
+        for sid, events in grouped.items()
+        if sid not in bots and (gaps := intervals(events))
+    ]
+    assert min(human_gaps) < max(stealth_gaps), "느린 사람과 빠른 봇의 간격이 겹쳐야 한다"
+
+
+def test_aggressive_bots_have_short_and_regular_intervals():
+    batch = generate_search(800, seed=23, rates=NO_ANOMALIES, mix=SearchMix(bot_session_ratio=0.1))
+    bots = set(batch.manifest["bot_sessions"])
+    aggressive = aggressive_ids(batch)
+    grouped = by_session(batch.events)
+
+    bot_gaps = [mean(intervals(events)) for sid, events in grouped.items() if sid in aggressive]
     human_gaps = [
         mean(gaps)
         for sid, events in grouped.items()
@@ -105,9 +138,10 @@ def test_bot_sessions_have_short_and_regular_intervals():
     assert min(human_gaps) > 15, "사람은 훨씬 느리게 검색한다"
 
 
-def test_bot_sessions_barely_click():
+def test_aggressive_bots_barely_click():
     batch = generate_search(800, seed=29, rates=NO_ANOMALIES, mix=SearchMix(bot_session_ratio=0.1))
     bots = set(batch.manifest["bot_sessions"])
+    aggressive = aggressive_ids(batch)
     grouped = by_session(batch.events)
 
     def click_rate(events):
@@ -115,23 +149,23 @@ def test_bot_sessions_barely_click():
         clicks = sum(1 for e in events if e["event_type"] == "SearchResultClick")
         return clicks / queries if queries else 0
 
-    bot_rates = [click_rate(events) for sid, events in grouped.items() if sid in bots]
+    bot_rates = [click_rate(events) for sid, events in grouped.items() if sid in aggressive]
     human_rates = [click_rate(events) for sid, events in grouped.items() if sid not in bots]
 
     assert mean(bot_rates) < 0.1
     assert mean(human_rates) > 0.4
 
 
-def test_bot_sessions_repeat_the_same_query():
+def test_aggressive_bots_repeat_the_same_query():
     batch = generate_search(800, seed=31, rates=NO_ANOMALIES, mix=SearchMix(bot_session_ratio=0.1))
-    bots = set(batch.manifest["bot_sessions"])
+    aggressive = aggressive_ids(batch)
     grouped = by_session(batch.events)
 
     def distinct_ratio(events):
         queries = [e["query"] for e in events if e["event_type"] == "SearchQuery"]
         return len(set(queries)) / len(queries)
 
-    bot_ratios = [distinct_ratio(events) for sid, events in grouped.items() if sid in bots]
+    bot_ratios = [distinct_ratio(events) for sid, events in grouped.items() if sid in aggressive]
     assert max(bot_ratios) < 0.2, "봇은 같은 검색어를 반복한다"
 
 

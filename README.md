@@ -79,6 +79,9 @@ cd ..
 # 검색 로그 집계 (Spark는 Docker로 실행 — 로컬에 Java 불필요)
 ./scripts/spark_submit.ps1                         # macOS/Linux: ./scripts/spark_submit.sh
 python -m pipeline.marts.load_search_marts --input data/marts
+
+# 어뷰징 탐지 (세션 마트를 읽어 점수를 매기고 판정 사유와 함께 저장)
+python -m pipeline.detect.run_detection --threshold 0.5
 ```
 
 Windows에서 dbt를 돌릴 때는 `PYTHONUTF8=1`을 설정하세요. 설정하지 않으면 한글 주석이 있는 파일을
@@ -96,6 +99,20 @@ ruff check .
 ```bash
 python scripts/score_validator.py --orders 2000 --seed 21
 ```
+
+어뷰징 탐지도 같은 방식으로 채점합니다. 정답지에 기록된 봇 세션과 비교해 임계값별 성능을 출력합니다.
+
+```bash
+python scripts/score_detector.py --sessions 4000 --seed 21
+```
+
+| 임계값 | precision | recall | F1 |
+|---|---|---|---|
+| 0.45 | 0.936 | 0.995 | 0.965 |
+| **0.50 (기본)** | **0.977** | **0.982** | **0.979** |
+| 0.60 | 1.000 | 0.785 | 0.880 |
+
+사람을 잘못 막는 비용이 크면 임계값을 올리고, 놓치는 비용이 크면 내립니다.
 
 ## 설계 결정
 
@@ -115,7 +132,7 @@ python scripts/score_validator.py --orders 2000 --seed 21
 - [x] `fct_delivery_order` — 주문 1건 = 1행, 품질 구멍(DLQ 영향)을 컬럼으로 표시
 - [x] 검색 로그 시나리오 — 봇 세션을 정답지에 기록, 최근 시각 기준 생성
 - [x] PySpark 세션·일별 지표 집계 + ClickHouse 마트 적재 (재적재해도 행이 늘지 않음)
-- [ ] 어뷰징 탐지와 precision/recall 채점
+- [x] 어뷰징 탐지와 precision/recall 채점 — F1 0.979 (공격적 봇 100%, 은밀한 봇 83%)
 - [ ] end-to-end 실행 스크립트
 - [ ] 결과 수치 (처리량, DLQ 비율, 중복 제거 정확도)
 
@@ -123,7 +140,7 @@ python scripts/score_validator.py --orders 2000 --seed 21
 
 - 합성 데이터이며 실제 서비스의 검색량·주문량·사용자 행동을 대표하지 않습니다.
 - 단일 노드 Kafka와 ClickHouse로 구성된 로컬 환경이며, 운영 규모의 처리량이나 SLA를 주장하지 않습니다.
-- 봇 세션의 신호(검색 횟수·간격·클릭률)가 정상 사용자와 겹치지 않게 만들어져 있어, 탐지 난도가 실제보다
-  낮습니다. 8일차에 경계가 모호한 세션을 추가해 임계값 선택의 트레이드오프를 볼 예정입니다.
+- 봇은 두 종류(뚜렷한 봇, 사람인 척하는 봇)로 만들어 신호가 겹치도록 했지만, 실제 어뷰징은 더 다양하고
+  빠르게 변합니다. 여기 수치는 이 합성 데이터에서의 성능이며 실제 서비스 성능을 주장하지 않습니다.
 - 수집 지연(`ingested_at − event_time`)은 과거 24시간치를 한 번에 재생해 적재했기 때문에 실시간 지연이
   아닙니다. 실시간에 가까운 값을 보려면 `publish --rate`로 속도를 조절해 발행해야 합니다.

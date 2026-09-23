@@ -56,15 +56,27 @@ BOT_CLICK_PROBABILITY = 0.04
 
 @dataclass(frozen=True)
 class SearchMix:
-    """세션 구성 비율."""
+    """세션 구성 비율.
+
+    봇을 두 종류로 나눈다.
+      aggressive : 숨길 생각이 없는 봇. 빠르고 많이 두드린다. 규칙만으로도 잡힌다.
+      stealth    : 사람인 척하는 봇. 느리게 돌고 가끔 클릭하며 검색어도 몇 개 섞는다.
+                   사람과 신호가 겹치므로 임계값을 어디에 둘지에 따라 놓치거나 오탐이 생긴다.
+
+    stealth 를 넣는 이유: 모든 봇이 뚜렷하면 탐지 점수가 항상 만점이라
+    "임계값을 왜 그렇게 정했나"를 설명할 거리가 없다.
+    """
 
     bot_session_ratio: float = 0.05
+    stealth_share: float = 0.4  # 봇 중 사람인 척하는 비율
 
     def __post_init__(self) -> None:
         if not 0 <= self.bot_session_ratio <= 1:
             raise ValueError(
                 f"bot_session_ratio must be between 0 and 1, got {self.bot_session_ratio}"
             )
+        if not 0 <= self.stealth_share <= 1:
+            raise ValueError(f"stealth_share must be between 0 and 1, got {self.stealth_share}")
 
 
 class _SearchGenerator:
@@ -141,6 +153,38 @@ class _SearchGenerator:
             now += timedelta(seconds=interval * rng.uniform(0.95, 1.05))
         return events
 
+    def stealth_bot_session(self, session_id: str) -> list[dict]:
+        """사람인 척하는 봇. 사람보다 조금 빠르고 조금 더 많이 검색할 뿐이다.
+
+        의도적으로 사람과 겹치게 만든다.
+          검색 횟수 8~25회   (사람 1~6회, 공격적 봇 40~200회)
+          간격 5~25초        (사람 20~120초 → 느린 사람과 겹친다)
+          클릭률 약 25%      (사람 60% 와 공격적 봇 4% 사이)
+          검색어 3~6개 반복  (사람보다는 단조롭지만 0.019 처럼 극단적이지 않다)
+        """
+        rng = self.rng
+        client = rng.choice(CLIENTS)
+        now = self.start + timedelta(seconds=rng.uniform(0, 24 * 3600))
+        pool = [rng.choice(BOT_QUERIES)] + rng.sample(POPULAR_QUERIES, rng.randint(2, 5))
+        base_interval = rng.uniform(5, 25)
+        events: list[dict] = []
+
+        for _ in range(rng.randint(8, 25)):
+            query = rng.choice(pool)
+            events.append(self._query_event(session_id, query, now, client))
+            if rng.random() < 0.25:
+                events.append(
+                    self._click_event(
+                        session_id,
+                        query,
+                        now + timedelta(seconds=rng.uniform(1, 6)),
+                        rng.randint(1, 5),
+                    )
+                )
+            # 사람처럼 보이도록 간격을 넓게 흔든다 (표준편차가 0 이 아니다)
+            now += timedelta(seconds=base_interval * rng.uniform(0.5, 1.8))
+        return events
+
     def corrupt(self, event: dict) -> tuple[dict, str]:
         broken = dict(event)
         options = ["missing_session_id", "empty_query", "bad_event_time"]
@@ -178,14 +222,18 @@ def generate_search(
     pending: list[_Pending] = []
     injected: dict[str, list] = {"duplicate": [], "late": [], "out_of_order": [], "invalid": []}
     bot_sessions: list[str] = []
+    bot_profiles: dict[str, str] = {}  # 세션 → aggressive / stealth
     clean_event_count = 0
 
     for _ in range(sessions):
         session_id = gen.session_id()
-        is_bot = rng.random() < mix.bot_session_ratio
-        events = gen.bot_session(session_id) if is_bot else gen.normal_session(session_id)
-        if is_bot:
+        if rng.random() < mix.bot_session_ratio:
+            stealth = rng.random() < mix.stealth_share
+            events = gen.stealth_bot_session(session_id) if stealth else gen.bot_session(session_id)
             bot_sessions.append(session_id)
+            bot_profiles[session_id] = "stealth" if stealth else "aggressive"
+        else:
+            events = gen.normal_session(session_id)
         clean_event_count += len(events)
 
         first_arrival = events[0]["event_time"] + gen.ingest_latency()
@@ -226,12 +274,15 @@ def generate_search(
             "clean_events": clean_event_count,
             "emitted_events": len(events_out),
             "bot_sessions": len(bot_sessions),
+            "aggressive_bots": sum(1 for kind in bot_profiles.values() if kind == "aggressive"),
+            "stealth_bots": sum(1 for kind in bot_profiles.values() if kind == "stealth"),
             "normal_sessions": sessions - len(bot_sessions),
             **{name: len(ids) for name, ids in injected.items()},
         },
         "injected": injected,
         # 8일차 이상 탐지의 정답지
         "bot_sessions": bot_sessions,
+        "bot_profiles": bot_profiles,
     }
     return GeneratedBatch(events=events_out, manifest=manifest)
 
