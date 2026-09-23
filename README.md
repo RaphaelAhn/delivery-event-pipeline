@@ -26,7 +26,9 @@ generator / search_generator ──► Kafka (orders / dispatch / delivery / sea
      dbt staging (타입 정리, event_id 중복 제거)
                  │
                  ├──► fct_delivery_order   주문 1건 = 1행
-                 └──► (예정) 검색 세션 지표 · 어뷰징 탐지
+                 │
+ Spark (Docker) ─┴──► mart_search_session / _daily / _top_query
+                      세션 1개 = 1행, 일별 지표, 인기 검색어
 ```
 
 ## 일부러 섞는 데이터 문제
@@ -72,6 +74,11 @@ python -m pipeline.consumer.run --from-beginning   # Kafka → 검사 → ClickH
 cd dbt
 dbt deps
 dbt build                                          # staging 중복 제거 → fct_delivery_order + 테스트
+cd ..
+
+# 검색 로그 집계 (Spark는 Docker로 실행 — 로컬에 Java 불필요)
+./scripts/spark_submit.ps1                         # macOS/Linux: ./scripts/spark_submit.sh
+python -m pipeline.marts.load_search_marts --input data/marts
 ```
 
 Windows에서 dbt를 돌릴 때는 `PYTHONUTF8=1`을 설정하세요. 설정하지 않으면 한글 주석이 있는 파일을
@@ -94,6 +101,7 @@ python scripts/score_validator.py --orders 2000 --seed 21
 
 - [0001. DuckDB 대신 ClickHouse](docs/decisions/0001-clickhouse-over-duckdb.md)
 - [0002. at-least-once와 다운스트림 중복 제거](docs/decisions/0002-at-least-once-and-downstream-dedup.md)
+- [0003. Spark는 착지 파일을 읽고 결과만 ClickHouse에](docs/decisions/0003-spark-reads-landing-files.md)
 
 ## 진행 상황
 
@@ -106,6 +114,7 @@ python scripts/score_validator.py --orders 2000 --seed 21
 - [x] dbt staging 모델과 테스트 — 중복 104건 제거, 동점 처리 기준 고정
 - [x] `fct_delivery_order` — 주문 1건 = 1행, 품질 구멍(DLQ 영향)을 컬럼으로 표시
 - [x] 검색 로그 시나리오 — 봇 세션을 정답지에 기록, 최근 시각 기준 생성
+- [x] PySpark 세션·일별 지표 집계 + ClickHouse 마트 적재 (재적재해도 행이 늘지 않음)
 - [ ] 어뷰징 탐지와 precision/recall 채점
 - [ ] end-to-end 실행 스크립트
 - [ ] 결과 수치 (처리량, DLQ 비율, 중복 제거 정확도)
