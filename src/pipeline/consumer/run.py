@@ -135,7 +135,7 @@ def main() -> None:
     print(f"rejected : {stats['rejected']} (DLQ rows: {stats['raw_dlq_events']})")
     for key in sorted(k for k in stats if k.startswith("reason:")):
         print(f"  {key[7:]:<20} {stats[key]}")
-    for table in ("raw_order_events", "raw_dispatch_events", "raw_delivery_events"):
+    for table in sorted(k for k in stats if k.startswith("raw_")):
         print(f"{table:<22} {stats[table]}")
     if elapsed > 0:
         print(f"elapsed  : {elapsed:.2f}s ({stats['consumed'] / elapsed:,.0f} events/s)")

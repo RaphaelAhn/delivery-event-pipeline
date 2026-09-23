@@ -5,7 +5,7 @@ Set-Location (Join-Path $PSScriptRoot "..")
 docker compose up -d --wait
 if ($LASTEXITCODE -ne 0) { throw "docker compose up failed" }
 
-foreach ($topic in @("orders.events", "dispatch.events", "delivery.events")) {
+foreach ($topic in @("orders.events", "dispatch.events", "delivery.events", "search.events")) {
     docker exec dep-kafka /opt/kafka/bin/kafka-topics.sh `
         --bootstrap-server localhost:9092 `
         --create --if-not-exists --topic $topic --partitions 3 --replication-factor 1

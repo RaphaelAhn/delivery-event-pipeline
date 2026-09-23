@@ -19,8 +19,12 @@ TABLE_BY_EVENT_TYPE = {
     "OrderCancelled": "raw_order_events",
     "DispatchResult": "raw_dispatch_events",
     "DeliveryCompleted": "raw_delivery_events",
+    "SearchQuery": "raw_search_events",
+    "SearchResultClick": "raw_search_events",
 }
 DLQ_TABLE = "raw_dlq_events"
+# 배달 이벤트는 주문번호로, 검색 이벤트는 세션으로 묶인다. 공통 칸이 다르므로 나눠서 다룬다.
+SEARCH_TABLE = "raw_search_events"
 
 COLUMNS = {
     "raw_order_events": [
@@ -64,6 +68,22 @@ COLUMNS = {
         "offset",
         "raw",
     ],
+    SEARCH_TABLE: [
+        "event_id",
+        "event_type",
+        "session_id",
+        "query",
+        "result_count",
+        "client",
+        "rank",
+        "doc_id",
+        "event_time",
+        "schema_version",
+        "topic",
+        "partition",
+        "offset",
+        "raw",
+    ],
     DLQ_TABLE: [
         "topic",
         "partition",
@@ -94,6 +114,28 @@ def parse_time(value: str) -> datetime:
 def to_row(event: dict, origin: Origin, raw: str) -> tuple[str, list]:
     """합격 이벤트를 (테이블 이름, 행) 으로 바꾼다."""
     table = TABLE_BY_EVENT_TYPE[event["event_type"]]
+    origin_columns = {
+        "topic": origin.topic,
+        "partition": origin.partition,
+        "offset": origin.offset,
+        "raw": raw,
+    }
+    if table == SEARCH_TABLE:
+        search = {
+            "event_id": event["event_id"],
+            "event_type": event["event_type"],
+            "session_id": event["session_id"],
+            "query": event["query"],
+            "result_count": event.get("result_count"),
+            "client": event.get("client"),
+            "rank": event.get("rank"),
+            "doc_id": event.get("doc_id"),
+            "event_time": parse_time(event["event_time"]),
+            "schema_version": event["schema_version"],
+            **origin_columns,
+        }
+        return table, [search[column] for column in COLUMNS[table]]
+
     common = {
         "event_id": event["event_id"],
         "event_type": event["event_type"],

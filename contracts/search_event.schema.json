@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "search_event.schema.json",
+  "title": "Search event (topic: search.events)",
+  "type": "object",
+  "required": ["schema_version", "event_id", "event_type", "session_id", "query", "event_time"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "event_id": { "type": "string" },
+    "event_type": { "enum": ["SearchQuery", "SearchResultClick"] },
+    "session_id": { "type": "string", "pattern": "^S-[0-9a-f]+$", "description": "같은 사용자의 연속된 검색 행동을 묶는 키" },
+    "query": { "type": "string", "minLength": 1, "maxLength": 200 },
+    "event_time": { "type": "string", "format": "date-time" },
+    "client": { "enum": ["web", "app"] },
+    "result_count": { "type": "integer", "minimum": 0, "description": "SearchQuery 일 때만 존재" },
+    "rank": { "type": "integer", "minimum": 1, "description": "클릭한 결과의 순위. SearchResultClick 일 때만 존재" },
+    "doc_id": { "type": "string", "description": "클릭한 문서. SearchResultClick 일 때만 존재" }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "event_type": { "const": "SearchQuery" } } },
+      "then": { "required": ["result_count", "client"] }
+    },
+    {
+      "if": { "properties": { "event_type": { "const": "SearchResultClick" } } },
+      "then": { "required": ["rank", "doc_id"] }
+    }
+  ],
+  "additionalProperties": false
+}

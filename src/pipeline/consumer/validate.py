@@ -24,6 +24,8 @@ SCHEMA_FILE_BY_EVENT_TYPE = {
     "OrderCancelled": "order_event.schema.json",
     "DispatchResult": "dispatch_event.schema.json",
     "DeliveryCompleted": "delivery_event.schema.json",
+    "SearchQuery": "search_event.schema.json",
+    "SearchResultClick": "search_event.schema.json",
 }
 
 # 불합격 사유 코드. 4일차에 DLQ 테이블에 그대로 저장한다.

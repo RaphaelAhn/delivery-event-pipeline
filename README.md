@@ -2,8 +2,8 @@
 
 [![ci](https://github.com/RaphaelAhn/delivery-event-pipeline/actions/workflows/ci.yml/badge.svg)](https://github.com/RaphaelAhn/delivery-event-pipeline/actions/workflows/ci.yml)
 
-합성 배달 이벤트(주문·배차·배달 완료)를 **Kafka로 수집 → 검증 → ClickHouse 적재 → dbt로 정제·마트 생성**하는
-로컬 데이터 파이프라인입니다.
+합성 **검색 로그**(검색어·클릭, 봇 트래픽 포함)와 배달 이벤트(주문·배차·배달)를
+**Kafka로 수집 → 계약 검증 → ClickHouse 적재 → dbt로 정제·마트 생성**하는 로컬 데이터 파이프라인입니다.
 
 설계 문서(이벤트 계약, 지표 정의, 운영 Runbook)는
 [data-portfolio / delivery-data-platform](https://github.com/RaphaelAhn/data-portfolio/tree/main/projects/delivery-data-platform)에 있고,
@@ -14,7 +14,7 @@
 ## 아키텍처
 
 ```
-generator ──► Kafka (orders / dispatch / delivery.events)
+generator / search_generator ──► Kafka (orders / dispatch / delivery / search.events)
                  │
                  ▼
           Python consumer ── 계약 위반 ──► raw_dlq_events
@@ -25,8 +25,8 @@ generator ──► Kafka (orders / dispatch / delivery.events)
                  ▼
      dbt staging (타입 정리, event_id 중복 제거)
                  │
-                 ▼
-     fct_delivery_order ──► mart_delivery_daily
+                 ├──► fct_delivery_order   주문 1건 = 1행
+                 └──► (예정) 검색 세션 지표 · 어뷰징 탐지
 ```
 
 ## 일부러 섞는 데이터 문제
@@ -55,8 +55,11 @@ cp .env.example .env
 ./scripts/up.ps1                # macOS/Linux: ./scripts/up.sh
 
 # 이벤트 생성 → Kafka 발행
-python -m pipeline.producer.generator --orders 1000
+python -m pipeline.producer.generator --orders 1000          # 배달 이벤트
 python -m pipeline.producer.publish
+
+python -m pipeline.producer.search_generator --sessions 2000  # 검색 로그 (봇 5% 포함)
+python -m pipeline.producer.publish --input data/search_events.jsonl
 ```
 
 Kafka UI: http://localhost:8080
@@ -102,10 +105,16 @@ python scripts/score_validator.py --orders 2000 --seed 21
 - [x] ClickHouse 원천 테이블과 컨슈머 적재, DLQ — 발행 = 적재 + DLQ 검산 통과
 - [x] dbt staging 모델과 테스트 — 중복 104건 제거, 동점 처리 기준 고정
 - [x] `fct_delivery_order` — 주문 1건 = 1행, 품질 구멍(DLQ 영향)을 컬럼으로 표시
+- [x] 검색 로그 시나리오 — 봇 세션을 정답지에 기록, 최근 시각 기준 생성
+- [ ] 어뷰징 탐지와 precision/recall 채점
 - [ ] end-to-end 실행 스크립트
 - [ ] 결과 수치 (처리량, DLQ 비율, 중복 제거 정확도)
 
 ## 한계
 
-- 합성 데이터이며 실제 서비스의 주문량·배차 로직을 대표하지 않습니다.
+- 합성 데이터이며 실제 서비스의 검색량·주문량·사용자 행동을 대표하지 않습니다.
 - 단일 노드 Kafka와 ClickHouse로 구성된 로컬 환경이며, 운영 규모의 처리량이나 SLA를 주장하지 않습니다.
+- 봇 세션의 신호(검색 횟수·간격·클릭률)가 정상 사용자와 겹치지 않게 만들어져 있어, 탐지 난도가 실제보다
+  낮습니다. 8일차에 경계가 모호한 세션을 추가해 임계값 선택의 트레이드오프를 볼 예정입니다.
+- 수집 지연(`ingested_at − event_time`)은 과거 24시간치를 한 번에 재생해 적재했기 때문에 실시간 지연이
+  아닙니다. 실시간에 가까운 값을 보려면 `publish --rate`로 속도를 조절해 발행해야 합니다.

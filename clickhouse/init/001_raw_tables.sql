@@ -65,6 +65,30 @@ ENGINE = MergeTree
 PARTITION BY toYYYYMM(event_time)
 ORDER BY (order_id, event_time, event_id);
 
+-- 검색 로그. 공고 조직(다음 검색)이 실제로 다루는 도메인이다.
+-- 세션 단위 분석과 어뷰징 탐지를 위해 session_id 를 정렬 키 앞쪽에 둔다.
+CREATE TABLE IF NOT EXISTS delivery.raw_search_events
+(
+    event_id            String,
+    event_type          LowCardinality(String),      -- SearchQuery / SearchResultClick
+    session_id          String,
+    query               String,
+    result_count        Nullable(Int32),             -- SearchQuery 일 때만
+    client              Nullable(String),
+    rank                Nullable(Int32),             -- SearchResultClick 일 때만
+    doc_id              Nullable(String),
+    event_time          DateTime64(3, 'UTC'),
+    schema_version      UInt8,
+    topic               LowCardinality(String),
+    partition           UInt16,
+    offset              UInt64,
+    ingested_at         DateTime64(3, 'UTC') DEFAULT now64(3),
+    raw                 String
+)
+ENGINE = MergeTree
+PARTITION BY toYYYYMMDD(event_time)
+ORDER BY (session_id, event_time, event_id);
+
 -- 불량품 보관함(DLQ): 계약을 어긴 이벤트를 사유와 함께 남긴다.
 -- 버리지 않는 이유 - 무엇이 왜 실패했는지 세어야 품질 지표를 만들 수 있고, 고친 뒤 재처리할 수 있다.
 CREATE TABLE IF NOT EXISTS delivery.raw_dlq_events

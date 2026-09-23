@@ -9,5 +9,7 @@ sources:
       - name: raw_order_events
       - name: raw_dispatch_events
       - name: raw_delivery_events
+      - name: raw_search_events
+        description: 검색어·클릭 로그. 세션 단위로 묶인다.
       - name: raw_dlq_events
         description: 계약을 어겨 적재되지 못한 이벤트. 위반 1건당 1행.

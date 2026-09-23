@@ -38,6 +38,29 @@ models:
               config:
                 where: "eta_minutes is not null"
 
+  - name: stg_search_events
+    description: 검색어·클릭 이벤트. event_id 기준 중복 제거 완료. 세션 분석과 어뷰징 탐지의 입력.
+    columns:
+      - name: event_id
+        data_tests: [unique, not_null]
+      - name: session_id
+        data_tests: [not_null]
+      - name: query
+        description: 빈 문자열은 검사원이 걸러 여기까지 오지 않는다.
+        data_tests: [not_null]
+      - name: event_type
+        data_tests:
+          - accepted_values:
+              values: ["SearchQuery", "SearchResultClick"]
+      - name: rank
+        description: 클릭한 결과의 순위. 검색어 이벤트에는 없다.
+        data_tests:
+          - dbt_utils.accepted_range:
+              min_value: 1
+              inclusive: true
+              config:
+                where: "rank is not null"
+
   - name: stg_delivery_events
     description: 배달 완료 이벤트. event_id 기준 중복 제거 완료.
     columns:
