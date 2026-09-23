@@ -1,5 +1,7 @@
 # delivery-event-pipeline
 
+[![ci](https://github.com/RaphaelAhn/delivery-event-pipeline/actions/workflows/ci.yml/badge.svg)](https://github.com/RaphaelAhn/delivery-event-pipeline/actions/workflows/ci.yml)
+
 합성 배달 이벤트(주문·배차·배달 완료)를 **Kafka로 수집 → 검증 → ClickHouse 적재 → dbt로 정제·마트 생성**하는
 로컬 데이터 파이프라인입니다.
 
@@ -66,6 +68,12 @@ pytest -q
 ruff check .
 ```
 
+검사원이 불량 이벤트를 제대로 잡는지는 생성기가 남긴 정답지(manifest)와 대조해 채점합니다.
+
+```bash
+python scripts/score_validator.py --orders 2000 --seed 21
+```
+
 ## 설계 결정
 
 - [0001. DuckDB 대신 ClickHouse](docs/decisions/0001-clickhouse-over-duckdb.md)
@@ -77,7 +85,7 @@ ruff check .
 - [x] 이벤트 계약 (`contracts/`)
 - [x] 이상 이벤트 비율을 조절하는 generator + 단위 테스트
 - [x] Kafka 발행 (`publish.py`)
-- [ ] 이벤트 검증 규칙 (`consumer/validate.py`)
+- [x] 이벤트 검증 규칙 (`consumer/validate.py`) — 정답지 대비 precision·recall 1.0
 - [ ] ClickHouse 원천 테이블과 컨슈머 적재, DLQ
 - [ ] dbt staging 모델과 테스트
 - [ ] `fct_delivery_order`, end-to-end 실행 스크립트
