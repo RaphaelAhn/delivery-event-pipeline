@@ -107,7 +107,7 @@ python -m pipeline.producer.search_generator --sessions 3000 --seed 925 \
 
 docker compose --profile airflow up -d --build     # Airflow UI: http://localhost:8081
 
-# 9/25 하루를 백필 (몇 번을 돌려도 결과는 한 벌)
+# 9/25 하루를 백필 (여러 번 다시 돌려도 행이 중복되지 않음)
 docker exec dep-airflow-scheduler airflow backfill create --dag-id search_daily_batch \
     --from-date 2026-09-25 --to-date 2026-09-25 --reprocess-behavior completed
 ```
@@ -148,7 +148,7 @@ docker exec dep-airflow-scheduler airflow backfill create --dag-id search_daily_
 | 5. 같은 입력으로 또 백필 | 전부 | 3,000 | 1 | 3,000 | 21,645 | 6,699 | 6/6 통과 |
 
 - 늦은 이벤트가 도착한 뒤 백필하면 **기준값과 정확히 같아집니다**(3행 = 1행).
-- 같은 날짜를 반복해도 행 수가 늘지 않습니다. 행 수는 `FINAL` 없이 센 값이라 저장된 행 자체가 한 벌입니다.
+- 같은 날짜를 5번 다시 처리해도 행이 두 배·세 배로 쌓이지 않습니다. 행 수는 `FINAL` 없이 센 값이라, 조회 시점의 중복 제거가 아니라 저장된 행 자체에 중복이 없다는 뜻입니다.
 
 ## 테스트
 
@@ -190,7 +190,7 @@ python scripts/score_detector.py --sessions 4000 --seed 21
 | 검색 로그 발행 | 2,000세션 25,035건 | 초당 약 11,056건 |
 | 집계 기준 | 도착 시각으로 묶었을 때 | 이벤트의 **81.5%**가 다른 날짜로 이동 → event_time 기준 채택 |
 | 어뷰징 탐지 | 4,000세션, 봇 219개 | 임계값 0.50에서 F1 **0.979** (뚜렷한 봇 100%, 사람인 척하는 봇 83.3%) |
-| 일별 배치 | Airflow 백필 5회 반복 | 행 수 불변, 지연 이벤트 재처리 후 기준값과 일치, 1회 약 47초 |
+| 일별 배치 | 같은 날짜를 Airflow로 5번 다시 처리(백필) | 행이 중복되지 않음, 지연 이벤트 재처리 후 기준값과 일치, 1회 약 47초 |
 
 ## 설계 결정
 
@@ -212,7 +212,7 @@ python scripts/score_detector.py --sessions 4000 --seed 21
 - [x] 검색 로그 시나리오 — 봇 세션을 정답지에 기록, 최근 시각 기준 생성
 - [x] PySpark 세션·일별 지표 집계 + ClickHouse 마트 적재 (재적재해도 행이 늘지 않음)
 - [x] 어뷰징 탐지와 precision/recall 채점 — F1 0.979 (공격적 봇 100%, 은밀한 봇 83%)
-- [x] Airflow 일별 배치 DAG — 백필 5회 반복에도 행 수 불변, 지연 이벤트 재처리 후 기준값과 일치
+- [x] Airflow 일별 배치 DAG — 같은 날짜를 5번 다시 처리해도 행 중복 없음, 지연 이벤트 재처리 후 기준값과 일치
 - [ ] 리눅스 서버 배포와 운영 기록
 - [ ] Grafana 관측 체계와 품질 지표 대시보드
 - [ ] end-to-end 실행 스크립트
