@@ -287,6 +287,12 @@ def generate_search(
     return GeneratedBatch(events=events_out, manifest=manifest)
 
 
+def _parse_start(value: str) -> datetime:
+    """`2026-09-25` 또는 `2026-09-25T06:00:00` 을 UTC 시각으로 읽는다."""
+    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    return parsed.replace(tzinfo=UTC) if parsed.tzinfo is None else parsed.astimezone(UTC)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--sessions", type=int, default=2000)
@@ -294,11 +300,17 @@ def main() -> None:
     parser.add_argument("--output", type=Path, default=Path("data/search_events.jsonl"))
     parser.add_argument("--bot-ratio", type=float, default=SearchMix.bot_session_ratio)
     parser.add_argument("--invalid-rate", type=float, default=AnomalyRates.invalid)
+    parser.add_argument(
+        "--start",
+        type=_parse_start,
+        help="세션 시작 구간의 시작 시각(UTC, 예: 2026-09-25). 백필할 날짜의 데이터를 만들 때 쓴다",
+    )
     args = parser.parse_args()
 
     batch = generate_search(
         args.sessions,
         seed=args.seed,
+        start=args.start,
         rates=AnomalyRates(invalid=args.invalid_rate),
         mix=SearchMix(bot_session_ratio=args.bot_ratio),
     )

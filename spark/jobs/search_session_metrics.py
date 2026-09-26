@@ -8,11 +8,17 @@ Spark 가 읽는 형태가 흔하고, 여기서는 그 자리를 로컬 파일�
 
 실행:
     scripts/spark_submit.ps1 data/search_events.jsonl data/marts
+    scripts/spark_submit.ps1 "data/landing/search/*.jsonl" data/marts/dt=2026-09-25 -Date 2026-09-25
+
+`--date` 를 주면 그 하루치만 계산한다 (Airflow 일별 배치·백필이 이 경로를 쓴다).
+착지 파일 전체를 읽은 뒤 event_time 으로 거르므로, 나중에 늦게 도착해 착지 파일에 추가된
+이벤트도 그 날짜를 다시 돌리면 원래 날짜에 들어간다.
 """
 
 from __future__ import annotations
 
-import sys
+import argparse
+from datetime import date
 
 from pyspark.sql import SparkSession
 from pyspark.sql import functions as F
@@ -26,6 +32,22 @@ def read_events(spark: SparkSession, input_path: str):
         .withColumn("event_date", F.to_date("event_ts"))
         .filter(F.col("event_ts").isNotNull() & F.col("session_id").isNotNull())
     )
+
+
+def for_date(events, target: date):
+    """하루치 배치의 입력을 두 갈래로 나눈다.
+
+    - 일별 지표·인기 검색어: 그날 일어난 이벤트만 (event_date == target)
+    - 세션 지표: 그날 **시작한** 세션의 이벤트 전부
+
+    세션을 event_date 로 자르면 자정을 넘긴 세션이 두 조각으로 나뉘어 지표가 틀어진다.
+    세션은 시작한 날짜에 한 번만 속하게 해서, 날짜별로 따로 돌려도 세션이 겹치지 않는다.
+    """
+    started = Window.partitionBy("session_id")
+    with_start = events.withColumn("session_date", F.min("event_date").over(started))
+    day_events = events.filter(F.col("event_date") == F.lit(target))
+    session_events = with_start.filter(F.col("session_date") == F.lit(target)).drop("session_date")
+    return day_events, session_events
 
 
 def deduplicate(events):
@@ -141,18 +163,27 @@ def write_jsonl(df, path: str) -> None:
 
 
 def main() -> None:
-    if len(sys.argv) != 3:
-        raise SystemExit("usage: search_session_metrics.py <input.jsonl> <output_dir>")
-    input_path, output_dir = sys.argv[1], sys.argv[2]
+    parser = argparse.ArgumentParser(description="Search log → session/daily/top-query marts")
+    parser.add_argument("input", help="JSONL 파일, 폴더 또는 glob")
+    parser.add_argument("output_dir")
+    parser.add_argument("--date", type=date.fromisoformat, help="이 날짜(UTC) 하루치만 계산")
+    args = parser.parse_args()
 
     spark = SparkSession.builder.appName("search-session-metrics").getOrCreate()
     spark.sparkContext.setLogLevel("WARN")
 
-    events = deduplicate(read_events(spark, input_path)).cache()
+    events = deduplicate(read_events(spark, args.input)).cache()
+    output_dir = args.output_dir
 
-    sessions = session_metrics(events)
-    daily = daily_metrics(events)
-    top = top_queries(events)
+    if args.date:
+        day_events, session_events = for_date(events, args.date)
+        sessions = session_metrics(session_events)
+        daily = daily_metrics(day_events)
+        top = top_queries(day_events)
+    else:
+        sessions = session_metrics(events)
+        daily = daily_metrics(events)
+        top = top_queries(events)
 
     write_jsonl(sessions, f"{output_dir}/mart_search_session")
     write_jsonl(daily, f"{output_dir}/mart_search_daily")

@@ -3,13 +3,14 @@
 [![ci](https://github.com/RaphaelAhn/delivery-event-pipeline/actions/workflows/ci.yml/badge.svg)](https://github.com/RaphaelAhn/delivery-event-pipeline/actions/workflows/ci.yml)
 
 합성 **검색 로그**(검색어·클릭, 봇 트래픽 포함)와 배달 이벤트(주문·배차·배달)를
-**Kafka로 수집 → 계약 검증 → ClickHouse 적재 → dbt로 정제·마트 생성**하는 로컬 데이터 파이프라인입니다.
+**Kafka로 수집 → 계약 검증 → ClickHouse 적재 → dbt로 정제·마트 생성**하고,
+**Airflow가 날짜 단위로 매일 돌리는(백필 가능)** 로컬 데이터 파이프라인입니다.
 
 설계 문서(이벤트 계약, 지표 정의, 운영 Runbook)는
 [data-portfolio / delivery-data-platform](https://github.com/RaphaelAhn/data-portfolio/tree/main/projects/delivery-data-platform)에 있고,
 이 저장소는 그 설계를 실제로 실행되는 코드로 구현합니다.
 
-> 진행 중: 1주차 (수집 → 적재 → staging). 아래 체크리스트 참고.
+> 진행 중: 2주차 (Airflow 일별 배치까지 완료, 서버 배포·관측 예정). 아래 체크리스트 참고.
 
 ## 아키텍처
 
@@ -29,6 +30,13 @@ generator / search_generator ──► Kafka (orders / dispatch / delivery / sea
                  │
  Spark (Docker) ─┴──► mart_search_session / _daily / _top_query
                       세션 1개 = 1행, 일별 지표, 인기 검색어
+                             │
+                             ▼
+                      mart_session_abuse ──► mart_quality_report
+                      어뷰징 판정·사유       날짜별 품질 점검 결과
+
+Airflow DAG search_daily_batch (매일 00:00 UTC, 날짜 단위 백필 가능)
+  dbt_build → spark_aggregate → load_marts → detect_abuse → quality_report
 ```
 
 ## 일부러 섞는 데이터 문제
@@ -87,6 +95,61 @@ python -m pipeline.detect.run_detection --threshold 0.5
 Windows에서 dbt를 돌릴 때는 `PYTHONUTF8=1`을 설정하세요. 설정하지 않으면 한글 주석이 있는 파일을
 시스템 인코딩(cp949)으로 읽으려다 실패합니다.
 
+## Airflow 일별 배치와 백필
+
+위 단계를 Airflow DAG `search_daily_batch` 하나가 날짜 단위로 순서대로 실행합니다.
+LocalExecutor 로 돌고, dbt·PySpark 는 Airflow 와 별도 venv 에 설치된 이미지(`airflow/Dockerfile`)를 씁니다.
+
+```bash
+# 처리할 날짜의 검색 로그를 착지 폴더에 만든다 (백필 시연용: 9/25 하루치)
+python -m pipeline.producer.search_generator --sessions 3000 --seed 925 \
+    --start 2026-09-25 --output data/landing/search/batch-001.jsonl
+
+docker compose --profile airflow up -d --build     # Airflow UI: http://localhost:8081
+
+# 9/25 하루를 백필 (몇 번을 돌려도 결과는 한 벌)
+docker exec dep-airflow-scheduler airflow backfill create --dag-id search_daily_batch \
+    --from-date 2026-09-25 --to-date 2026-09-25 --reprocess-behavior completed
+```
+
+![search_daily_batch DAG 실행 화면](docs/images/airflow-search-daily-batch.png)
+
+9/25 구간 실행(실행 유형 `백필`)의 화면입니다(시각은 KST 표시). 다섯 단계가 모두 성공했고, 시도 횟수 6은
+같은 날짜를 여섯 번 다시 돌렸다는 뜻입니다. `spark_aggregate` 의 9회에는 첫 실행에서 출력 폴더 권한 문제로
+재시도 3회 끝에 실패한 기록이 포함돼 있습니다. 왼쪽 빨간 칸은 데이터가 없는 날짜(9/10)를 일부러 돌려
+품질 점검 실패 → 알림 기록을 확인한 실행입니다.
+
+| 단계 | 하는 일 | 다시 돌려도 안전한 이유 |
+|---|---|---|
+| `dbt_build` | 배달 이벤트 staging → `fct_delivery_order` + dbt 테스트 | 모델을 매번 새로 만든다 |
+| `spark_aggregate` | 착지 파일 전체에서 그날 것만 골라 세션·일별·인기 검색어 집계 | 출력 폴더 `dt=<날짜>` 를 덮어쓴다 |
+| `load_marts` | 집계 결과를 ClickHouse 마트에 적재 | 그날 행을 지우고 넣는다 |
+| `detect_abuse` | 그날 세션에 어뷰징 점수와 사유를 매김 | 그날 판정을 지우고 넣는다 |
+| `quality_report` | 중복·누락·판정 누락·오탐 비율 점검 → JSON + `mart_quality_report` | 그날 점검 결과를 지우고 넣는다 |
+
+- **날짜 규칙**: 9/26 00:00 UTC 실행이 9/25 구간을 처리합니다(`CronDataIntervalTimetable`, `ds` = 처리 날짜).
+  세션은 시작한 날짜에 속하므로 자정을 넘긴 세션도 두 날짜로 쪼개지지 않습니다.
+- **재시도와 알림**: 모든 작업은 실패 시 2회 재시도(1분부터 지수 증가)하고, 최종 실패하면
+  `data/alerts/failures.jsonl` 에 기록합니다. `ALERT_WEBHOOK_URL` 을 설정하면 Slack 호환 웹훅으로도 보냅니다.
+  품질 점검 실패는 데이터 문제라 재시도하지 않고 바로 알립니다.
+- 설계 이유는 [0004. 날짜 단위 덮어쓰기](docs/decisions/0004-airflow-daily-overwrite.md)에 있습니다.
+
+### 검증: 지연 이벤트 재처리와 멱등성 (2026-09-26 실행)
+
+9/25 하루치(세션 3,000개, 이벤트 29,443줄)로 백필을 반복했습니다. 늦게 도착하는 이벤트(생성기 정답지의
+`late` 1,289줄)를 처음엔 빼 두었다가, 도착한 것으로 보고 착지 폴더에 추가한 뒤 다시 백필했습니다.
+
+| 실행 | 착지 데이터 | 세션 행 | 일별 행 | 판정 행 | 검색 수 | 클릭 수 | 품질 점검 |
+|---|---|---|---|---|---|---|---|
+| 1. 전체 데이터 (기준값) | 전부 | 3,000 | 1 | 3,000 | 21,645 | 6,699 | 6/6 통과 |
+| 2. 늦은 이벤트 도착 전 | 늦은 이벤트 제외 | 3,000 | 1 | 3,000 | 20,712 | 6,386 | 6/6 통과 |
+| 3. 늦은 이벤트 도착 후 백필 | 전부 | 3,000 | 1 | 3,000 | **21,645** | **6,699** | 6/6 통과 |
+| 4. 같은 입력으로 다시 백필 | 전부 | 3,000 | 1 | 3,000 | 21,645 | 6,699 | 6/6 통과 |
+| 5. 같은 입력으로 또 백필 | 전부 | 3,000 | 1 | 3,000 | 21,645 | 6,699 | 6/6 통과 |
+
+- 늦은 이벤트가 도착한 뒤 백필하면 **기준값과 정확히 같아집니다**(3행 = 1행).
+- 같은 날짜를 반복해도 행 수가 늘지 않습니다. 행 수는 `FINAL` 없이 센 값이라 저장된 행 자체가 한 벌입니다.
+
 ## 테스트
 
 ```bash
@@ -119,6 +182,7 @@ python scripts/score_detector.py --sessions 4000 --seed 21
 - [0001. DuckDB 대신 ClickHouse](docs/decisions/0001-clickhouse-over-duckdb.md)
 - [0002. at-least-once와 다운스트림 중복 제거](docs/decisions/0002-at-least-once-and-downstream-dedup.md)
 - [0003. Spark는 착지 파일을 읽고 결과만 ClickHouse에](docs/decisions/0003-spark-reads-landing-files.md)
+- [0004. Airflow 일별 배치는 날짜 단위 덮어쓰기로 멱등성 보장](docs/decisions/0004-airflow-daily-overwrite.md)
 
 ## 진행 상황
 
@@ -133,6 +197,9 @@ python scripts/score_detector.py --sessions 4000 --seed 21
 - [x] 검색 로그 시나리오 — 봇 세션을 정답지에 기록, 최근 시각 기준 생성
 - [x] PySpark 세션·일별 지표 집계 + ClickHouse 마트 적재 (재적재해도 행이 늘지 않음)
 - [x] 어뷰징 탐지와 precision/recall 채점 — F1 0.979 (공격적 봇 100%, 은밀한 봇 83%)
+- [x] Airflow 일별 배치 DAG — 백필 5회 반복에도 행 수 불변, 지연 이벤트 재처리 후 기준값과 일치
+- [ ] 리눅스 서버 배포와 운영 기록
+- [ ] Grafana 관측 체계와 품질 지표 대시보드
 - [ ] end-to-end 실행 스크립트
 - [ ] 결과 수치 (처리량, DLQ 비율, 중복 제거 정확도)
 

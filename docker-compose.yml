@@ -1,5 +1,42 @@
 name: delivery-event-pipeline
 
+# Airflow 공통 설정. Airflow 서비스는 `airflow` 프로필로 묶어서, 수집만 볼 때는 띄우지 않는다.
+#   docker compose --profile airflow up -d
+x-airflow-common: &airflow-common
+  build: ./airflow
+  image: delivery-event-pipeline-airflow:local
+  profiles: [airflow]
+  environment: &airflow-env
+    # LocalExecutor: 스케줄러가 작업을 자기 컨테이너의 하위 프로세스로 실행한다.
+    # 단일 머신에서 병렬 실행이 되고, Celery·Redis 같은 추가 구성 요소가 필요 없다.
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@airflow-postgres/airflow
+    AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+    AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "false"
+    AIRFLOW__CORE__EXECUTION_API_SERVER_URL: http://airflow-apiserver:8080/execution/
+    # 로컬 전용: 로그인 없이 모든 사용자를 관리자로 본다. 외부에 노출하는 환경에서는 쓰지 않는다.
+    AIRFLOW__CORE__SIMPLE_AUTH_MANAGER_ALL_ADMINS: "true"
+    # 구성 요소끼리 주고받는 토큰의 서명 키. 모든 Airflow 컨테이너가 같은 값을 써야 한다.
+    AIRFLOW__API_AUTH__JWT_SECRET: ${AIRFLOW_JWT_SECRET:-local-dev-only}
+    AIRFLOW__DAG_PROCESSOR__REFRESH_INTERVAL: "30"
+    # 작업이 접속할 ClickHouse (컨테이너 네트워크 안의 이름)
+    CLICKHOUSE_HOST: clickhouse
+    CLICKHOUSE_PORT: "8123"
+    CLICKHOUSE_DB: ${CLICKHOUSE_DB:-delivery}
+    CLICKHOUSE_USER: ${CLICKHOUSE_USER:-pipeline}
+    CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-pipeline}
+    PYTHONPATH: /opt/project/src
+    SEARCH_LANDING_PATH: ${SEARCH_LANDING_PATH:-data/landing/search/*.jsonl}
+    ALERT_WEBHOOK_URL: ${ALERT_WEBHOOK_URL:-}
+  volumes:
+    - ./airflow/dags:/opt/airflow/dags
+    - airflow-logs:/opt/airflow/logs
+    # 작업은 저장소 전체(코드·dbt·데이터)를 /opt/project 에서 읽고 쓴다
+    - .:/opt/project
+  depends_on: &airflow-depends
+    airflow-postgres:
+      condition: service_healthy
+
 services:
   kafka:
     image: apache/kafka:3.9.1
@@ -65,5 +102,68 @@ services:
       kafka:
         condition: service_healthy
 
+  # --- Airflow (profile: airflow) -------------------------------------------------------------
+
+  airflow-postgres:
+    image: postgres:16
+    container_name: dep-airflow-postgres
+    profiles: [airflow]
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: airflow
+    volumes:
+      - airflow-db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U airflow"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # 메타데이터 DB 스키마를 만들고 끝난다. 나머지 Airflow 서비스는 이 작업이 끝난 뒤 뜬다.
+  airflow-init:
+    <<: *airflow-common
+    container_name: dep-airflow-init
+    command: ["airflow", "db", "migrate"]
+    restart: "no"
+
+  airflow-apiserver:
+    <<: *airflow-common
+    container_name: dep-airflow-apiserver
+    command: ["airflow", "api-server"]
+    ports:
+      - "8081:8080"   # 8080 은 Kafka UI 가 쓴다
+    depends_on:
+      <<: *airflow-depends
+      airflow-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fs http://localhost:8080/api/v2/version >/dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  airflow-scheduler:
+    <<: *airflow-common
+    container_name: dep-airflow-scheduler
+    command: ["airflow", "scheduler"]
+    depends_on:
+      <<: *airflow-depends
+      airflow-init:
+        condition: service_completed_successfully
+      clickhouse:
+        condition: service_healthy
+
+  airflow-dag-processor:
+    <<: *airflow-common
+    container_name: dep-airflow-dag-processor
+    command: ["airflow", "dag-processor"]
+    depends_on:
+      <<: *airflow-depends
+      airflow-init:
+        condition: service_completed_successfully
+
 volumes:
   clickhouse-data:
+  airflow-db:
+  airflow-logs:

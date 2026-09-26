@@ -4,6 +4,12 @@ Spark 는 결과를 여러 개의 part 파일로 나눠 쓴다. 그 폴더를 �
 마트 테이블은 ReplacingMergeTree 라서, 같은 배치를 다시 적재해도 행이 늘지 않는다 (멱등성).
 
     python -m pipeline.marts.load_search_marts --input data/marts
+    python -m pipeline.marts.load_search_marts --input data/marts/dt=2026-09-25 --date 2026-09-25
+
+`--date` 를 주면 그 날짜의 기존 행을 지운 뒤 넣는다 (날짜 단위 덮어쓰기).
+ReplacingMergeTree 의 중복 정리는 백그라운드 병합 때 일어나서, 병합 전에는 `FINAL` 없이 세면
+행이 두 배로 보인다. 백필은 "몇 번을 돌려도 그 날짜의 행이 정확히 한 벌"이어야 하므로
+병합에 기대지 않고 지우고 다시 쓴다. 늦게 온 이벤트로 세션이 줄거나 바뀌어도 옛 행이 남지 않는다.
 """
 
 from __future__ import annotations
@@ -84,7 +90,17 @@ def to_rows(records: list[dict], columns: list[str]) -> list[list]:
     return [[coerce(column, record.get(column)) for column in columns] for record in records]
 
 
-def load(input_dir: Path, client=None) -> dict[str, int]:
+def check_single_date(table: str, records: list[dict], target: date) -> None:
+    """다른 날짜 행이 섞여 있으면 멈춘다.
+
+    지운 날짜와 넣는 날짜가 다르면 데이터가 사라지거나 겹친다.
+    """
+    stray = {r.get("event_date") for r in records} - {target.isoformat()}
+    if stray:
+        raise ValueError(f"{table}: rows outside {target}: {sorted(map(str, stray))}")
+
+
+def load(input_dir: Path, client=None, target: date | None = None) -> dict[str, int]:
     client = client or clickhouse_connect.get_client(
         host=settings.clickhouse_host,
         port=settings.clickhouse_port,
@@ -95,6 +111,13 @@ def load(input_dir: Path, client=None) -> dict[str, int]:
     loaded: dict[str, int] = {}
     for folder, table, columns in MART_SPECS:
         records = read_jsonl_dir(input_dir / folder)
+        if target is not None:
+            check_single_date(table, records, target)
+            # 결과가 0행이어도 지운다. "그날 데이터 없음"도 덮어써야 할 결과다
+            client.command(
+                f"DELETE FROM {table} WHERE event_date = {{d:Date}}",
+                parameters={"d": target},
+            )
         if not records:
             loaded[table] = 0
             continue
@@ -106,9 +129,12 @@ def load(input_dir: Path, client=None) -> dict[str, int]:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Load Spark search marts into ClickHouse")
     parser.add_argument("--input", type=Path, default=Path("data/marts"))
+    parser.add_argument(
+        "--date", type=date.fromisoformat, help="이 날짜의 기존 행을 지우고 다시 넣는다"
+    )
     args = parser.parse_args()
 
-    for table, count in load(args.input).items():
+    for table, count in load(args.input, target=args.date).items():
         print(f"{table:<24} {count}")
 
 

@@ -30,9 +30,14 @@ SESSION_ROW = {
 class FakeClient:
     def __init__(self):
         self.inserts = []
+        self.calls = []  # command·insert 가 호출된 순서
 
     def insert(self, table, rows, column_names):
         self.inserts.append((table, [list(r) for r in rows], list(column_names)))
+        self.calls.append(("insert", table))
+
+    def command(self, sql, parameters=None):
+        self.calls.append(("command", sql, parameters))
 
 
 def write_part(directory, name, records):
@@ -112,3 +117,55 @@ def test_load_sends_each_mart_to_its_table(tmp_path):
         "mart_search_session",
         "mart_search_daily",
     ]
+
+
+def write_day(tmp_path, day="2026-09-22"):
+    write_part(
+        tmp_path / "mart_search_session", "part-0.json", [{**SESSION_ROW, "event_date": day}]
+    )
+    write_part(
+        tmp_path / "mart_search_daily",
+        "part-0.json",
+        [{"event_date": day, "sessions": 1, "queries": 3, "clicks": 2, "distinct_queries": 3}],
+    )
+    write_part(tmp_path / "mart_search_top_query", "part-0.json", [])
+
+
+def test_date_mode_deletes_the_day_before_inserting(tmp_path):
+    # 백필을 몇 번 돌려도 그 날짜의 행이 한 벌만 남으려면, 넣기 전에 반드시 지워야 한다
+    write_day(tmp_path)
+    client = FakeClient()
+    load(tmp_path, client=client, target=date(2026, 9, 22))
+
+    session_calls = [c for c in client.calls if "mart_search_session" in str(c)]
+    assert session_calls[0][0] == "command"
+    assert session_calls[0][1].startswith("DELETE FROM mart_search_session")
+    assert session_calls[0][2] == {"d": date(2026, 9, 22)}
+    assert session_calls[1] == ("insert", "mart_search_session")
+
+
+def test_date_mode_clears_a_day_even_when_the_result_is_empty(tmp_path):
+    # 인기 검색어가 0행이어도 예전 행이 남아 있으면 안 된다
+    write_day(tmp_path)
+    client = FakeClient()
+    load(tmp_path, client=client, target=date(2026, 9, 22))
+
+    deleted = [c[1].split()[2] for c in client.calls if c[0] == "command"]
+    assert deleted == ["mart_search_session", "mart_search_daily", "mart_search_top_query"]
+    assert ("insert", "mart_search_top_query") not in client.calls
+
+
+def test_date_mode_refuses_rows_from_another_day(tmp_path):
+    write_day(tmp_path, day="2026-09-23")
+    client = FakeClient()
+    with pytest.raises(ValueError, match="rows outside 2026-09-22"):
+        load(tmp_path, client=client, target=date(2026, 9, 22))
+    # 지우기 전에 멈춰야 기존 데이터가 사라지지 않는다
+    assert client.calls == []
+
+
+def test_without_a_date_nothing_is_deleted(tmp_path):
+    write_day(tmp_path)
+    client = FakeClient()
+    load(tmp_path, client=client)
+    assert all(c[0] == "insert" for c in client.calls)
