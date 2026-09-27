@@ -6,6 +6,10 @@ ORDERS_TOPIC = "orders.events"
 DISPATCH_TOPIC = "dispatch.events"
 DELIVERY_TOPIC = "delivery.events"
 SEARCH_TOPIC = "search.events"
+# 센서 시나리오는 아직 Kafka·ClickHouse 경로에 연결하지 않았다.
+# 그래서 ALL_TOPICS(컨슈머 구독 목록)에 넣지 않는다.
+# 지금은 파일 → 검사 → 이탈 탐지 → BigQuery 배치로만 흐른다 (pipeline.sensor).
+SENSOR_TOPIC = "sensor.events"
 
 ALL_TOPICS = (ORDERS_TOPIC, DISPATCH_TOPIC, DELIVERY_TOPIC, SEARCH_TOPIC)
 
@@ -16,6 +20,7 @@ _TOPIC_BY_EVENT_TYPE = {
     "DeliveryCompleted": DELIVERY_TOPIC,
     "SearchQuery": SEARCH_TOPIC,
     "SearchResultClick": SEARCH_TOPIC,
+    "SensorReading": SENSOR_TOPIC,
 }
 
 

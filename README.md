@@ -192,6 +192,37 @@ python scripts/score_detector.py --sessions 4000 --seed 21
 | 어뷰징 탐지 | 4,000세션, 봇 219개 | 임계값 0.50에서 F1 **0.979** (뚜렷한 봇 100%, 사람인 척하는 봇 83.3%) |
 | 일별 배치 | 같은 날짜를 Airflow로 5번 다시 처리(백필) | 행이 중복되지 않음, 지연 이벤트 재처리 후 기준값과 일치, 1회 약 47초 |
 
+## 콜드체인 센서 시나리오 (2026-09-27 추가)
+
+화물마다 온도 기록계가 5분 간격으로 온도를 재며 창고 → 내륙 운송 → 국제 운송을 지나는 합성 데이터입니다.
+Kafka·ClickHouse 경로와 별개로 **파일 → 계약 검사 → 중복 제거 → event_time 정렬 → 이탈·공백 탐지 → BigQuery** 배치로 흐릅니다.
+
+| 섞는 상황 | 내용 | 올바른 처리 |
+|---|---|---|
+| excursion | 환적 시점에 20~90분 연속 허용 범위 이탈 (의약품 2~8°C, 냉동 -25~-15°C) | **15분 이상 연속**이면 이탈 1건 |
+| spike | 한 번만 튄 값 | 이탈이 아님 (알림 피로를 만드는 오탐) |
+| dropout | 30~90분 측정값 유실 | 정상으로 넘기지 않고 **공백**으로 보고 |
+| offline | 30~90분 통신 끊김 후 재연결 때 한꺼번에 업로드 | event_time으로 정렬하면 정상 (공백 아님) |
+| duplicate · invalid | 재전송, 센서 오류값(-999), 필수 칸 누락, 잘못된 시각 | 중복 제거, DLQ |
+
+```bash
+python -m pipeline.producer.sensor_generator --shipments 500
+python -m pipeline.sensor.excursion                    # 정제 → 탐지 → 정답지 채점 → data/sensor_marts/
+python -m pipeline.sensor.bigquery --project <GCP 프로젝트 ID>   # 날짜 파티션 적재 + 요약 뷰
+```
+
+500화물, 70,251건 기준 (로컬 실행, 2026-09-27):
+
+| 비교 | 결과 |
+|---|---|
+| 정제 | 70,251건 → 측정값 67,506 + 중복 2,015 + 불량 730 (건수 검산 일치) |
+| 이 규칙 (event_time 정렬 + 15분 연속) | 이탈 56건 precision **1.0** / recall **1.0**, 튄 값 오탐 0, 공백 31건 recall 1.0, 오보 0 |
+| 한 번만 벗어나도 알림 | 알림 109건 중 53건이 튄 값 → precision **0.51** |
+| 도착 순서대로 처리 | 공백 오보 **30개 화물**(통신 끊김 29개 전부), 이탈 precision·recall 0.946 |
+
+BigQuery 적재는 `테이블$YYYYMMDD` 파티션을 WRITE_TRUNCATE로 교체해 다시 적재해도 행이 늘지 않습니다.
+적재 로직은 가짜 클라이언트로 테스트했고, 실제 GCP 프로젝트 적재 결과는 아래 진행 상황에 따로 기록합니다.
+
 ## 설계 결정
 
 - [0001. DuckDB 대신 ClickHouse](docs/decisions/0001-clickhouse-over-duckdb.md)
@@ -213,6 +244,10 @@ python scripts/score_detector.py --sessions 4000 --seed 21
 - [x] PySpark 세션·일별 지표 집계 + ClickHouse 마트 적재 (재적재해도 행이 늘지 않음)
 - [x] 어뷰징 탐지와 precision/recall 채점 — F1 0.979 (공격적 봇 100%, 은밀한 봇 83%)
 - [x] Airflow 일별 배치 DAG — 같은 날짜를 5번 다시 처리해도 행 중복 없음, 지연 이벤트 재처리 후 기준값과 일치
+- [x] 콜드체인 센서 시나리오 — 15분 연속 이탈 탐지 precision·recall 1.0, 튄 값 오탐 0, 유실 공백 보고
+- [x] BigQuery 적재 코드 (날짜 파티션 교체, 요약 뷰) — 가짜 클라이언트 테스트 통과
+- [ ] BigQuery 실제 프로젝트 적재 (GCP 인증 필요)
+- [ ] 센서 시나리오를 Kafka·ClickHouse·Airflow 경로에 연결
 - [ ] 리눅스 서버 배포와 운영 기록
 - [ ] Grafana 관측 체계와 품질 지표 대시보드
 - [ ] end-to-end 실행 스크립트
@@ -226,3 +261,5 @@ python scripts/score_detector.py --sessions 4000 --seed 21
   빠르게 변합니다. 여기 수치는 이 합성 데이터에서의 성능이며 실제 서비스 성능을 주장하지 않습니다.
 - 수집 지연(`ingested_at − event_time`)은 과거 24시간치를 한 번에 재생해 적재했기 때문에 실시간 지연이
   아닙니다. 실시간에 가까운 값을 보려면 `publish --rate`로 속도를 조절해 발행해야 합니다.
+- 센서 이탈 기준(15분 연속)은 설명을 위한 단일 상수입니다. 실제 콜드체인 기준은 화주·품목·규정마다 다르며,
+  센서 시나리오는 아직 Kafka·ClickHouse·Airflow 경로에 연결하지 않은 파일 배치입니다.

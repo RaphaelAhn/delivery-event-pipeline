@@ -26,6 +26,7 @@ SCHEMA_FILE_BY_EVENT_TYPE = {
     "DeliveryCompleted": "delivery_event.schema.json",
     "SearchQuery": "search_event.schema.json",
     "SearchResultClick": "search_event.schema.json",
+    "SensorReading": "sensor_event.schema.json",
 }
 
 # 불합격 사유 코드. 4일차에 DLQ 테이블에 그대로 저장한다.

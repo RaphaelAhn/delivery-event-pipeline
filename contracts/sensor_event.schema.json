@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "sensor_event.schema.json",
+  "title": "Cold-chain sensor reading (topic: sensor.events)",
+  "type": "object",
+  "required": ["schema_version", "event_id", "event_type", "shipment_id", "device_id", "cargo_type", "leg", "temperature_c", "event_time"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "event_id": { "type": "string" },
+    "event_type": { "const": "SensorReading" },
+    "shipment_id": { "type": "string", "pattern": "^SH-[0-9]+$", "description": "화물 한 건. 온도 이탈은 이 단위로 판정한다" },
+    "device_id": { "type": "string", "pattern": "^D-[0-9a-f]+$", "description": "화물에 붙은 온도 기록계" },
+    "cargo_type": { "enum": ["pharma", "frozen"], "description": "pharma 2~8°C, frozen -25~-15°C" },
+    "leg": { "enum": ["warehouse", "inland", "international"], "description": "창고 → 내륙 운송 → 국제 운송" },
+    "temperature_c": { "type": "number", "minimum": -80, "maximum": 80, "description": "물리적으로 가능한 범위. 센서 오류값(-999 등)은 여기서 걸러진다" },
+    "humidity_pct": { "type": "number", "minimum": 0, "maximum": 100 },
+    "event_time": { "type": "string", "format": "date-time", "description": "센서가 잰 시각. 도착 시각이 아니다" }
+  },
+  "additionalProperties": false
+}
